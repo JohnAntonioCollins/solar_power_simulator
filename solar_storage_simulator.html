@@ -1,0 +1,588 @@
+<html>
+<head>
+
+</head>
+<body>
+<!--<img style="display:none" src="solar_cell-612x612.jpg">-->
+<!--<img id="solar_cell" src="solar_cell-612x612.jpg" width="50" height="50">-->
+<div>
+    <!--    This is just a vehicle to use the inline javascript methods in the dev console.-->
+</div>
+
+<div>
+    <!--    Here are shapes:<b/>-->
+</div>
+
+<script>
+    const SCALE_FACTOR = 2;
+    const STROKE_COLOR = 'black';
+    const STROKE_PX = 2 * SCALE_FACTOR;
+    const STROKE_STYLE = `${STROKE_PX}px ${STROKE_COLOR}`;
+    const TEXT_FONT = 'Arial';
+    const TEXT_HEIGHT_FACTOR = 1 / 8;
+    const PHI = (1 + Math.sqrt(5)) / 2;// golden ratio
+
+    const CONTEXT = (() => {
+        const canvasElement = document.createElement('canvas');
+        canvasElement.setAttribute('id', 'canvas');
+        document.querySelector('body').appendChild(canvasElement);
+        canvasElement.width = window.innerWidth;
+        canvasElement.height = window.innerHeight;
+        const context = canvasElement.getContext('2d');
+        context.rect(0, 0, canvasElement.width, canvasElement.height);
+        return context;
+    })();
+
+    const BATTERIES = [];
+    const SOLAR_PANELS = [];
+
+    class Sun {
+        percent;
+        sprite;
+    }
+
+    class Moon {
+        percent;
+        sprite;
+    }
+
+    class Sky {
+        sun;
+        moon;
+        time;
+        percent;// rough capture of lux based on time of day
+
+        constructor(time) {
+            this.sun = new Sun();
+            this.moon = new Moon();
+            this.time = time;
+        }
+
+        /** // rough concept of lux based on time of day */
+        getLux() {
+            // console.log('get lux()');
+            const i = this.time;
+            console.log('sky time: ', i);
+            const twelfths = 12 - Math.abs(12 - i)// so 100% is noon, 0% is midnight
+            console.log('twelfths: ', twelfths);
+            const percent = twelfths / 12;// so 100% is noon, 0% is midnight // twentyfourths?
+            console.log('lux percent: ', percent);
+            this.percent = percent;
+            return percent;
+        }
+    }
+
+    const SKY = new Sky(0);
+
+    class Sprite {
+        x;
+        y;
+        w;
+        h;
+        r;
+
+        constructor(x, y, w, h, r) {
+            this.x = x;
+            this.y = y;
+            this.w = w;
+            this.h = h;
+            this.r = r;
+        }
+    }
+
+    class Battery {
+        id;
+        capacity;// watt-hour
+        soc;// watt-hour
+        time;// hours of most recent update
+        sprite;// UI
+
+        constructor(id, capacity) {
+            this.id = id;
+            this.capacity = capacity;
+            this.soc = this.capacity * 0;//0.75;// LiFePo4 batteries ship at ~75% charge.
+            return this;
+        }
+
+        /** positive to charge, negative to discharge. returns change in watt-hours. */
+        chargeOrDischarge = (watts, now) => {
+            console.log('charge / discharge ()');
+            // TODO bug where 100% battery will dip to ~80% briefly.
+            if (watts == 0) return 0;
+
+            const oldTime = this.time ? this.time : 0;
+            this.time = now;
+            console.log("old time: ", oldTime);
+            console.log('new time: ', now);
+            const elapsed = now - oldTime;// TODO handle when now=01:00 and oldTime=23:00
+            console.log("elapsed: ", elapsed);
+
+            const oldSoc = this.soc ? this.soc : 0;
+            console.log("old soc: ", oldSoc);
+            console.log("watts: ", watts);
+            const wattHours = watts * elapsed;
+            console.log("watt-hours: ", wattHours);
+            const sumSoc = oldSoc + wattHours;
+            console.log('sum soc: ', sumSoc);
+
+            if (sumSoc < 0) {
+                this.soc = 0;
+                console.log('BATTERY EMPTY!');
+            } else if (sumSoc > this.capacity) this.soc = this.capacity;
+            else this.soc = sumSoc;
+
+            const changed = this.soc - oldSoc;
+            console.log("soc changed: ", changed);
+            return changed;
+        };
+
+
+    }
+
+    class BatteryRenderer {
+
+        static #BOX_WIDTH = 50 * SCALE_FACTOR;
+        static #BOX_HEIGHT = BatteryRenderer.#BOX_WIDTH * PHI;// * SCALE_FACTOR;
+        static #BOX_PX = STROKE_PX * SCALE_FACTOR;
+
+        static #BOX_COLOR = STROKE_COLOR;
+        static #BOX_STROKESTYLE = `${BatteryRenderer.#BOX_PX}px ${BatteryRenderer.#BOX_COLOR}`;
+        static #BOX_RADII = 6 * SCALE_FACTOR;
+
+
+        static #SOC_COLOR = 'green';
+        static #SOC_COLOR_2 = 'gray';
+
+        #strokeRect(x, y, w, h) {
+            // CONTEXT.strokeRect(x, y, w, h);
+            CONTEXT.beginPath();
+            CONTEXT.roundRect(x, y, w, h, BatteryRenderer.#BOX_RADII);
+            CONTEXT.stroke();
+        }
+
+        #fillRect(x, y, w, h) {
+            // CONTEXT.fillRect(x, y, w, h);
+            const fillRadii = BatteryRenderer.#BOX_RADII - BatteryRenderer.#BOX_PX * 2 / 3;
+            CONTEXT.beginPath();
+            CONTEXT.roundRect(x, y, w, h, fillRadii);
+            CONTEXT.fill();
+        }
+
+        static clear = function (battery) {
+            // console.log('battery clear()');
+            // has to clear the part of the stroke beyond the sprite dimensions.
+            const x = battery.sprite.x - BatteryRenderer.#BOX_PX / 2;
+            const y = battery.sprite.y - BatteryRenderer.#BOX_PX / 2;
+            const w = battery.sprite.w + BatteryRenderer.#BOX_PX;
+            const h = battery.sprite.h + BatteryRenderer.#BOX_PX;
+            const r = battery.sprite.r + BatteryRenderer.#BOX_PX;
+            if (r) clearRoundRect(x, y, w, h, r);
+            else CONTEXT.clearRect(x, y, w, h);
+
+
+            function clearRoundRect(x, y, w, h, r) {
+                CONTEXT.save(); // Save the current canvas state
+                CONTEXT.beginPath(); // Begin a new path
+                CONTEXT.roundRect(x, y, w, h, r); // Create the rounded rectangle path
+                CONTEXT.clip(); // Turn the path into a clipping region
+                CONTEXT.clearRect(x, y, w, h); // Clear the area within the clipping region
+                CONTEXT.restore(); // Restore the canvas state, removing the clipping region
+            }
+        };
+
+        #clear(battery) {
+            BatteryRenderer.clear(battery);
+        }
+
+
+        #drawBox(battery) {
+            const x = battery.sprite.x;
+            const y = battery.sprite.y;
+            const w = battery.sprite.w;
+            const h = battery.sprite.h;
+            const r = battery.sprite.r;
+            CONTEXT.strokeStyle = BatteryRenderer.#BOX_STROKESTYLE;
+            // this.#strokeRect(x, y, w, h);
+            // CONTEXT.strokeRect(x, y, w, h);
+            CONTEXT.beginPath();
+            CONTEXT.roundRect(x, y, w, h, r);
+            CONTEXT.stroke();
+        };
+
+        #drawSoc(battery) {
+
+            // begin path
+            // make round rec
+            // close path
+            // clip
+            // fill
+            const clipX = battery.sprite.x;
+            const clipY = battery.sprite.y;
+            const clipW = battery.sprite.w;
+            const clipH = battery.sprite.h;
+            const clipR = battery.sprite.r;
+            CONTEXT.save(); // Save the current canvas state
+            CONTEXT.beginPath();
+            CONTEXT.roundRect(clipX, clipY, clipW, clipH, clipR);
+            CONTEXT.closePath();
+            CONTEXT.clip();
+
+            // background, fill all
+            CONTEXT.fillStyle = BatteryRenderer.#SOC_COLOR_2;
+            CONTEXT.fillRect(clipX, clipY, clipW, clipH);// no radii, rely on clip to mask the fill
+
+            // soc, fill by fraction full
+            const socFraction = battery.soc / battery.capacity;
+
+            CONTEXT.fillStyle = BatteryRenderer.#SOC_COLOR;
+            const x = battery.sprite.x;
+            const w = battery.sprite.w;
+            const h = socFraction * battery.sprite.h;
+            const y = battery.sprite.y + (battery.sprite.h - h);
+            CONTEXT.fillRect(x, y, w, h);// no radii, rely on clip to mask the fill
+            CONTEXT.restore();
+
+            // text
+            const text = (() => {
+                const raw = Math.trunc(100 * socFraction) + "%";
+                const padded = raw.padStart(4, ' ');
+                return padded;
+            })();
+            // console.log('battery text: ', text);
+            const textH = battery.sprite.h * TEXT_HEIGHT_FACTOR;//(1 / 8);
+            CONTEXT.font = `${textH}px ${TEXT_FONT}`;
+            CONTEXT.textAlign = 'center';
+            const textX = (battery.sprite.w) / 2 + battery.sprite.x;
+            const textY = (battery.sprite.h) / 2 + battery.sprite.y;
+            CONTEXT.fillStyle = BatteryRenderer.#BOX_COLOR;
+            CONTEXT.fillText(text, textX, textY);
+
+        }
+
+        #render(battery) {
+            this.#clear(battery);
+            this.#drawSoc(battery);
+            this.#drawBox(battery);
+            // ...?
+            return battery;
+        };
+
+        /** demo / test;
+         let b = BATTERIES[0]; setInterval(()=>{b.soc = Math.trunc(Math.random()*100); console.log(b.soc); BatteryRenderer.render(b.sprite.x,b.sprite.y,b)},1000);
+         */
+        static render(x, y, battery) {
+            const w = BatteryRenderer.#BOX_WIDTH;
+            const h = BatteryRenderer.#BOX_HEIGHT;
+            const r = BatteryRenderer.#BOX_RADII;
+            battery.sprite = new Sprite(x, y, w, h, r);
+            new BatteryRenderer().#render(battery);
+            return battery;
+        }
+    }
+
+    class SolarPanel {
+        id;
+        watt;
+        output;
+        sprite;// UI
+
+        constructor(id, watt) {
+            this.id = id;
+            this.watt = watt ? watt : 0;
+        }
+
+        generate = function (sunPercent, hours) {
+            // console.log('generate()');
+            // console.log('sun percent', sunPercent);
+            // just use a simple percent of sunlight based on time of day
+            const wattComponentOfWattHours = this.watt * sunPercent;// * hours;// just watts??
+            this.output = wattComponentOfWattHours;
+            console.log(`pv watts: ${this.watt} * ${sunPercent} = ${this.output}`);
+            // const wattsPerMeterSquared = 0.0079 * lux;
+        }
+    }
+
+    class SolarPanelRenderer {
+        static #PANEL_HEIGHT = 100 * SCALE_FACTOR;
+        static PANEL_HEIGHT = SolarPanelRenderer.#PANEL_HEIGHT;
+        static #PANEL_WIDTH = PHI * SolarPanelRenderer.PANEL_HEIGHT;
+
+        static #FRAME_PX = STROKE_PX;
+        static #GLASS_COLORS = ['lightblue', 'darkblue'];
+
+        static #FRAME_COLOR = STROKE_COLOR;
+        static #FRAME_STROKESTYLE = `${SolarPanelRenderer.#FRAME_PX}px ${SolarPanelRenderer.#FRAME_COLOR}`;
+
+        static render = function (x, y, solarPanel) {
+            // console.log("static render()");
+            const w = SolarPanelRenderer.#PANEL_WIDTH;
+            const h = SolarPanelRenderer.#PANEL_HEIGHT;
+            solarPanel.sprite = new Sprite(x, y, w, h);
+            return new SolarPanelRenderer().#render(solarPanel);
+        };
+
+        #clear = function (solarePanel) {
+            // console.log("#clear()")
+            const s = solarePanel.sprite;
+            const fp = SolarPanelRenderer.#FRAME_PX;
+            const x = s.x - fp;
+            const y = s.y - fp;
+            const w = s.w + 2 * fp;
+            const h = s.h + 2 * fp;
+            CONTEXT.clearRect(x, y, w, h);
+        };
+
+        #drawGlass = function (solarPanel) {
+            // console.log("drawGlass()");
+            const s = solarPanel.sprite;
+            // Create linear gradient
+            const grad = CONTEXT.createLinearGradient(s.x, s.y, s.x + s.w, s.y + s.h);
+            grad.addColorStop(0, SolarPanelRenderer.#GLASS_COLORS[1]);
+            grad.addColorStop(1, SolarPanelRenderer.#GLASS_COLORS[0]);
+            CONTEXT.fillStyle = grad;
+            CONTEXT.fillRect(s.x, s.y, s.w, s.h);
+        };
+
+        #drawFrame = function (solarPanel) {
+            // console.log("drawFrame()");
+            const s = solarPanel.sprite;
+            CONTEXT.strokeStyle = SolarPanelRenderer.#FRAME_STROKESTYLE;
+            CONTEXT.strokeRect(s.x, s.y, s.w, s.h);
+
+            // drawCenterBar(solarPanel);
+            function drawCenterBar() {
+                const x = s.x + s.w / 2;
+                const startY = s.y;
+                const endY = s.y + s.h;
+                CONTEXT.beginPath();
+                CONTEXT.moveTo(x, startY);
+                CONTEXT.lineTo(x, endY);
+                CONTEXT.stroke();
+            }
+        };
+
+        #drawOutputText = function (solarPanel) {
+            // console.log("draw output text ()");
+            const s = solarPanel.sprite;
+            const x = s.x + s.w / 2;
+            const y = s.y + s.h / 2;
+            const output = Math.trunc(solarPanel.output);
+            const text = `${output} watts`;
+            console.log(`pv text[${text}]`);
+            // TODO text height factor
+            const textH = solarPanel.sprite.h * TEXT_HEIGHT_FACTOR;//(1 / 8);
+            console.log(`pv textH[${textH}]`);
+            // CONTEXT.font = TEXT_FONT;
+            CONTEXT.font = `${textH}px ${TEXT_FONT}`;
+            CONTEXT.textAlign = 'center';
+            CONTEXT.fillStyle = STROKE_COLOR;// fillStyle takes only color. Npx will break it.
+            // CONTEXT.strokeStyle = SolarPanelRenderer.#FRAME_STROKESTYLE;
+            CONTEXT.fillText(text, x, y);
+
+        };
+
+        #render = function (solarPanel) {
+            // console.log("#render");
+            this.#clear(solarPanel);
+            this.#drawGlass(solarPanel);
+            this.#drawFrame(solarPanel);
+            this.#drawOutputText(solarPanel);
+            // ...?
+            return solarPanel;
+        }
+    }
+
+    class SkyRenderer {
+
+        // 2 gradients (sun,moon) that trade transparency based on percent, based on time
+        static #SUN_COLORS = ['orange', 'white', 'lightblue'];
+        static #MOON_COLORS = ['black', 'lightblue', 'white'];
+
+        #renderSun = function (sun) {
+            // console.log('renderSun()')
+            // make gradient
+            // set transparency opposite percent
+            // put sun, centered at top, behind everything
+            // Create a radial gradient
+            const canvas = document.getElementById("canvas");
+            // const CONTEXT = canvas.getContext("2d");
+
+            const gradient = CONTEXT.createRadialGradient(
+                canvas.width / 2,
+                canvas.height / 6,
+                0,
+                canvas.width / 2,
+                canvas.height / 6,
+                canvas.width / 2
+                /*canvas.width / 4,
+                canvas.height / 4,
+                0,
+                canvas.width / 4,
+                canvas.height / 4,
+                canvas.width / 4*/
+            );
+
+            // Add color stops
+            gradient.addColorStop(1, SkyRenderer.#SUN_COLORS[2]);
+            gradient.addColorStop(0.2, SkyRenderer.#SUN_COLORS[1]);
+            gradient.addColorStop(0, SkyRenderer.#SUN_COLORS[0]);
+            // gradient.addColorStop(0, "red");
+            // gradient.addColorStop(0.5, "yellow");
+            // gradient.addColorStop(1, "blue");
+
+            // Turn transparency on
+            CONTEXT.globalAlpha = sun.percent;//0.2;
+
+            // Apply the gradient to the fillStyle and draw a circle
+            CONTEXT.fillStyle = gradient;
+            CONTEXT.beginPath();
+            //    arc(x: number, y: number, radius: number, startAngle: number, endAngle: number, anticlockwise?: boolean): void;
+// TODO make this big enough to fill the view, but keep the sun in view and centered. Do same with moon.
+//             CONTEXT.arc(canvas.width, canvas.height, canvas.width, 0, 2 * Math.PI);
+            CONTEXT.arc(canvas.width / 2, canvas.height / 2, canvas.width / 2, 0, 2 * Math.PI);
+            CONTEXT.fill();
+
+            //reset transparency
+            CONTEXT.globalAlpha = 1;
+
+        };
+        #renderMoon = function (moon) {
+            // console.log('renderMoon()')
+            // make gradient
+            // set transparency opposite percent
+            // put sun, centered at top, behind everything
+            // Create a radial gradient
+            const canvas = document.getElementById("canvas");
+            // const CONTEXT = canvas.getContext("2d");
+
+            const gradient = CONTEXT.createRadialGradient(
+                canvas.width / 4,
+                canvas.height / 4,
+                0,
+                canvas.width / 4,
+                canvas.height / 4,
+                canvas.width / 4
+            );
+
+            // Add color stops
+            gradient.addColorStop(1, SkyRenderer.#MOON_COLORS[0]);
+            gradient.addColorStop(0.08, SkyRenderer.#MOON_COLORS[1]);
+            gradient.addColorStop(0, SkyRenderer.#MOON_COLORS[2]);
+            // gradient.addColorStop(0, "red");
+            // gradient.addColorStop(0.5, "yellow");
+            // gradient.addColorStop(1, "blue");
+
+            // Turn transparency on
+            CONTEXT.globalAlpha = 1 - moon.percent;//0.2;
+
+            // Apply the gradient to the fillStyle and draw a circle
+            CONTEXT.fillStyle = gradient;
+            CONTEXT.beginPath();
+            CONTEXT.arc(canvas.width / 2, canvas.height / 2, canvas.width / 2, 0, 2 * Math.PI);
+            CONTEXT.fill();
+
+            //reset transparency
+            CONTEXT.globalAlpha = 1;
+
+        };
+
+
+        #render = function (sky) {
+            /*for(i = 0; i < 24; i++){ console.log('time:',i); console.log(12 - Math.abs(12-i)); console.log('---------------------'); }*/
+            // console.log('RENDER SKY');
+
+            // moved to Sky.getLux();
+            /*const i = sky.time;
+            // console.log('sky time: ', i);
+            const twelfths = 12 - Math.abs(12 - i)// so 100% is noon, 0% is midnight
+            console.log('twelfths: ', twelfths);
+            const percent = twelfths / 12;// so 100% is noon, 0% is midnight // twentyfourths?
+            console.log('percent: ', percent);*/
+
+            // console.log('sky: ', sky);
+            // console.log('sky.sun: ', sky.sun);
+            // console.log('sky.moon: ', sky.moon);
+            // const percent = sky.getLux();
+            const percent = sky.percent;
+            sky.sun.percent = percent;
+            sky.moon.percent = percent;
+            // TODO lowest layer all purple?
+            this.#renderSun(sky.sun);
+            this.#renderMoon(sky.moon);
+        }
+
+        /** render sky demo / test:
+         let i = 0; setInterval(()=>{console.log('boy howdy!'); SkyRenderer.render(i%24,SKY); i++;},1000);
+         */
+        static render(time, sky) {
+            sky.time = time;
+            new SkyRenderer().#render(sky);
+            return sky;
+        }
+    }
+
+    (function run() {
+        console.log('run()');
+
+        const sky = (() => {
+            const time = 0;//9.5;// 09:30, arbitrary start time to test rendering
+            // SkyRenderer.render(time, SKY);
+            SKY.time = time;
+            return SKY;
+        })();
+        console.log('init sky: ', sky);
+
+        const solarPanel1 = (() => {
+            const p = new SolarPanel(crypto.randomUUID(), 100);
+            //const output = p.generate(0, 0);// set an arbitrary sun% to test rendering. normally 0,0.
+            // SolarPanelRenderer.render(200, 200, p);
+            SOLAR_PANELS.push(p);
+            return p;
+        })();
+        console.log('init solar panel: ', solarPanel1);
+
+        const underSolarePanel = SolarPanelRenderer.PANEL_HEIGHT * 1.5;
+
+        const battery1 = (() => {
+            const b = new Battery(crypto.randomUUID(), 1200);// capacity in watt-hours!
+            // BatteryRenderer.render(10, underSolarePanel, b);
+            BATTERIES.push(b);
+            return b;
+        })();
+        console.log("init battery: ", battery1);
+
+        // TODO loop it all with day/night times
+        // game loop
+        const loop = (() => {
+            let loopNum = 0;
+            let i = 0;
+            setInterval(() => {
+                    console.log('-------------------------------------------------------------')
+                    console.log('-------------------------------------------------------------')
+
+                    const hours = i % 24;
+                    console.log('const hours: ', hours);
+                    sky.time = hours;
+                    sky.getLux();
+                    solarPanel1.generate(sky.percent, hours);
+                    battery1.chargeOrDischarge(solarPanel1.output, hours);
+
+                    SkyRenderer.render(hours, sky);
+                    SolarPanelRenderer.render(200, 230, solarPanel1);
+                    BatteryRenderer.render(150, 150 + underSolarePanel, battery1);
+
+                    i += 1;// increment 1 hour each loop.
+                    // i += 0.1;// increment 1/10 hour each loop.
+                    loopNum++;
+                },
+                3000// iterate at 3000ms intervals.
+                // 100// iterate at 100ms intervals.
+            );
+        })();
+
+
+    })();
+</script>
+
+</body>
+</html>
